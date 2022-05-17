@@ -1,31 +1,235 @@
-# GlobalWebIndex Engineering Challenge
 
-## Introduction
+# GWI Go Challenge
+---------
 
-This challenge is designed to give you the opportunity to demonstrate your abilities as a software engineer and specifically your knowledge of the Go language.
+This is my solution for the [GWI Go Challenge](https://github.com/GlobalWebIndex/platform-go-challenge).
 
-On the surface the challenge is trivial to solve, however you should choose to add features or capabilities which you feel demonstrate your skills and knowledge the best. For example, you could choose to optimise for performance and concurrency, you could choose to add a robust security layer or ensure your application is highly available. Or all of these.
 
-Of course, usually we would choose to solve any given requirement with the simplest possible solution, however that is not the spirit of this challenge.
+## Features
 
-## Challenge
+Aside from the required functionality, the following features where added:
 
-Let's say that in GWI platform all of our users have access to a huge list of assets. We want our users to have a peronal list of favourites, meaning assets that favourite or “star” so that they have them in their frontpage dashboard for quick access. An asset can be one the following
-* Chart (that has a small title, axes titles and data)
-* Insight (a small piece of text that provides some insight into a topic, e.g. "40% of millenials spend more than 3hours on social media daily")
-* Audience (which is a series of characteristics, for that exercise lets focus on gender (Male, Female), birth country, age groups, hours spent daily on social media, number of purchases last month)
-e.g. Males from 24-35 that spent more than 3 hours on social media daily.
+* Authentication with JWT
+* Rate limiting
+* Pagination
+* Metrics ([expvar](https://pkg.go.dev/expvar))
+* Testing and Benchmark suite
+* Docker
 
-Build a web server which has some endpoint to receive a user id and return a list of all the user’s favourites. Also we want endpoints that would add an asset to favourites, remove it, or edit its description. Assets obviously can share some common attributes (like their description) but they also have completely different structure and data. It’s up to you to decide the structure and we are not looking for something overly complex here (especially for the cases of audiences). There is no need to have/deploy/create an actual database although we would like to discuss about storage options and data representations.
+## Storage
 
-Note that users have no limit on how many assets they want on their favourites so your service will need to provide a reasonable response time.
+For the storage layer, a thread-safe memory store was implemented. The store is optimized for read operations (read all users, all assets or a user's favourite assets). The storage is preloaded with a number of assets on service initialization.
 
-A working server application with functional API is required, along with a clear readme.md. Useful and passing tests would be also be viewed favourably
+One could ask why not use a persistent storage since the number of objects could become quite large and not fit in memory. In fact, I've assumed that the number of objects will not surpass a certain limit. Although I've made this assumption, great care has been taken into choosing the right data types to minimize each object's memory footprint.
 
-It is appreciated, though not required, if a Dockerfile is included.
+For thread-safety, I chose to back up every `map` of the memory store with a `sync.RWMutex`. `sync.Map` was also a choice, but it is specialized for certain access patterns which shouldn't show up in this service.
 
-## Submission
+## Web Server
 
-Just create a fork from the current repo and send it to us!
+For the web server, the standard's library `http.Server` is used along with gorilla's `mux` package for routing. The server is configured with sane defaults. Practices such as graceful shutdown, rate limiting, authentication, logging/recovery middleware and health check endpoints have been applied. Furthermore, a metrics endpoint is registered under `/metrics`.
 
-Good luck, potential colleague!
+
+## API Reference
+
+
+### Assets
+
+#### `GET /assets` 
+
+Get all available assets.
+
+#### `GET /asset/{id}`
+
+Get information about a specific asset.
+
+#### `POST /asset`
+
+Create a new asset. Examples for the request body:
+
+
+```json
+{
+  "type": "insight",
+  "description": "awesome insight",
+  "data": {
+    "text": "40% of millenials spend more than 3hours on social media daily"
+  }
+}
+```
+
+```json
+{
+  "type": "chart",
+  "description": "awesome chart",
+  "data": {
+    "title": "awesome chart",
+    "titleAxisX": "axisX",
+    "titleAxisY": "axisY",
+    "data": "cmFuZG9tIGJhc2U2NCBzdHJpbmcK"
+  }
+}
+```
+
+```json
+{
+  "type": "audience",
+  "description": "awesome audience",
+  "data": {
+    "gender": "male",
+    "birthCountry": "Greece",
+    "socialMediaHoursUsage": 0,
+    "ageGroup": {
+      "min": 15,
+      "max": 30
+    }
+  }
+}
+```
+
+
+#### `DELETE /asset/{id}`
+
+Delete a specific asset. If the asset is present in the favourites of any user, it will be removed from the favourites too. 
+
+#### `PUT /asset/{id}`
+
+Update a specific asset. In the request body, specify only the fields of the asset that you are willing to update. For example, to update only the description of an asset:
+
+```json
+{
+	"description" : "new description"
+}
+```
+
+
+### Users
+
+#### `GET /users` 
+
+Get all available users.
+
+#### `GET /user/{id}`
+
+Get information about a specific user.
+
+#### `POST /user`
+
+Create a new user. Example request body:
+
+```json
+{
+  "name": "Lucas Litsos",
+  "email": "lkslts64@gmail.com"
+}
+```
+
+#### `DELETE /user/{id}`
+
+Delete a specific user along with all of its favourites.
+
+#### `PUT /user/{id}`
+
+Update a specific user. In the request body, specify only the fields of the user that you are willing to update. For example, to update only the name of an user:
+
+```json
+{
+	"name" : "new name"
+}
+```
+
+### Favourites
+
+#### `GET /users/{id}/favourites` 
+
+Get all favourites of a specific user. This endpoint supports two optional query parameters: `page` and `limit`.
+`page` specifies the page of results to return. `limit` caps the number of results.
+
+#### `PUT /users/{id}/favourites/{assetID}` 
+
+Add an asset to a user's favourites.
+
+#### `DELETE /users/{id}/favourites/{assetID}` 
+
+Delete an asset from a user's favourites.
+
+
+## Build/Run
+
+If you want to run with Docker:
+
+     docker build -t gwitha .
+     docker  run -p  8080:8080 gwitha
+
+or directly from source:
+
+     go run main.go 
+
+
+## Interacting with the API
+
+*Note: the API testing CLI client used in the examples is [httpie](https://httpie.io/).*
+
+First you have to login:
+
+    http POST localhost:8080/login username=gwi password=gwi
+
+In the set cookie, you will find a JWT token like this one:
+
+    eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VybmFtZSI6Imd3aSIsImV4cCI6MTY1MjgwMTkwNn0.plr_BQJV8qxwby3Mx1GuLxK2ybyF9Z3yDa8Yo3hvLcM
+  
+In every subsequent request, you have to include the JWT token in the Authorization header:
+
+    Authorization: Bearer eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VybmFtZSI6Imd3aSIsImV4cCI6MTY1MjgwMTkwNn0.plr_BQJV8qxwby3Mx1GuLxK2ybyF9Z3yDa8Yo3hvLcM
+  
+You can now make requests to the API.
+
+To get a list of all assets:
+
+    http GET localhost:8080/assets
+
+or assets with a specific type:
+  
+    http GET 'localhost:8080/assets?type=chart'
+
+To get a list of all users:
+
+    http GET localhost:8080/users
+
+
+To get a list of a user's 1 favourite assets:
+
+    http GET localhost:8080/users/1/favourites
+
+
+The former endpoint supports pagination, limiting the number of results and specifying the type of assets to return.
+
+    http GET 'localhost:8080/users/1/favourites?page=1&limit=100&type=insight'
+
+This section does not cover all endpoints. See the API reference for more.
+
+
+## Usage 
+
+```
+  -port string
+        port to listen on (default "8080")
+  -ratelimit
+        enable rate limiting
+```
+
+
+## Testing
+
+Under the project's root directory, run:
+
+	 cd service && go test ./...
+
+
+
+## Dependencies
+
+* [github.com/gorilla/mux](github.com/gorilla/mux)
+* [github.com/golang-jwt/jwt](github.com/golang-jwt/jwt)
+* [github.com/gorilla/handlers](github.com/gorilla/handlers)
+* [golang.org/x/time](golang.org/x/time)
+* [github.com/stretchr/testify](github.com/stretchr/testify)
